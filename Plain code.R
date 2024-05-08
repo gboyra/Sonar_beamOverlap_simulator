@@ -16,6 +16,8 @@ rmax = 500
 delta.r = 5
 # Angular distance between consecutive beams:
 phi.ang <- beamwidth/N
+# Degree of overlap
+overlap <- 200
 
 
 beam <- expand.grid(
@@ -108,8 +110,48 @@ beam.sf <- beam.sf  |>
     within = ifelse(i %in% index, T, F)
   )
 
+# plot the swath and ellipse together
+ggplot(beam.sf) + 
+  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey80")  +
+  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey80")  +
+  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10, color = within))  +
+  scale_color_manual(values = c("grey80", "pink4")) +
+  geom_path(data = ellip.df, aes(x = x, y = y), color = "black", linewidth = 1 ) +
+  guides(size = "none")
+
+
 # 4. Correct overlap distortion -------------
 #++++++++++++++++++++++++++++++++++++++++++++
+
+
+# 4.1 Correct the ellipse -------------
+#++++++++++++++++++++++++++++++++++++++++++++
+
+# 1.1 Correct the ellipse -------------
+#++++++++++++++++++++++++++++++++++++++++++++
+
+a.cor <- diamx/2 - 2*(overlap/200 + 1/2)*ycm*tan(pi*phi.ang/360)*(abs(cos(pi*angle/180)))
+b.cor <- diamy/2 - 2*(overlap/200 + 1/2)*ycm*tan(pi*phi.ang/360)*(abs(sin(pi*angle/180)))
+
+# plot the ellipse simulating the corrected school
+# store the ellipse plot into a variable (to extract the points afterwards)
+ellip.cor.ggplot <- ggplot() +
+  ggforce::geom_ellipse(aes(x0 = 0, y0 = ycm , a = a.cor, 
+                            b = b.cor, angle = pi*angle/180)) 
+
+# access the ggplot data using ggplot_build()
+# store the ellipse points as a polygon in a df
+ellip.cor.df <- ggplot_build(ellip.cor.ggplot)$data[[1]] |>
+  select(x, y) 
+
+# close the polygon adding the first row at the end:
+ellip.cor <- ellip.cor.df |>  
+  rbind(ellip.cor.df[1,]) |> 
+  as.matrix() 
+
+# transform the ellipse into an sf object:
+ellip.cor.sf <- sf::st_polygon(list(ellip.cor))
+
 
 ## 4.1 Remove 1 beam -------------
 #+++++++++++++++++++++++++++++++++
@@ -263,4 +305,25 @@ if (overlap == 400) overlap.beam <- beam.sf.red4
 if (overlap == 500) overlap.beam <- beam.sf.red5  
 if (overlap == 600) overlap.beam <- beam.sf.red6  
 
+if (overlap == 0) {
+  ggplot(beam.sf) + 
+    geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
+    geom_sf(data = beam.sf.red1, aes(geometry = geometry, size = (radius)/10), color = "pink")  +
+    geom_path(data = ellip.df, aes(x = x, y = y)) +
+    # scale_color_manual(values = c("red", "blue")) +
+    guides(size = "none")
+  
+} else {
+  ggplot(beam.sf) + 
+    # ggtitle(length(beam$angle)) +
+    geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
+    geom_sf(data = beam.sf.red1, aes(geometry = geometry, size = (radius)/10), color = "red")  +
+    # according to the degree of overlap, we have to change the number in the following  line:
+    geom_sf(data = overlap.beam, aes(geometry = geometry, size = (radius)/10, color = within.red))  +
+    geom_path(data = ellip.df, aes(x = x, y = y)) +
+    geom_path(data = ellip.cor.df, aes(x = x, y = y), color = "black", linetype = 2) +
+    scale_color_manual(values = c("red", "pink")) +
+    guides(size = "none") +
+    guides(color = "none")
+}
 
