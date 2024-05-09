@@ -153,177 +153,95 @@ ellip.cor <- ellip.cor.df |>
 ellip.cor.sf <- sf::st_polygon(list(ellip.cor))
 
 
-## 4.1 Remove 1 beam -------------
-#+++++++++++++++++++++++++++++++++
+## 4.1 Remove overlapped beams -------------
+#+++++++++++++++++++++++++++++++++++++++++++
+overlap = 600
 
-# When the overlap is 100%, we must remove one single beam to correct the school size
+# Select the samples inside the distorted ellipse:
+school.sf <- beam.sf |> 
+  filter(within == T) |> 
+  mutate(corrected = T) |> 
+  select(angle:within, corrected) 
+school.sf$corrected |> sum()
 
-# Subset the samples of the beam that are within the school minus one beam
-beam.sf.red1 <- beam.sf |>  
-  # Select the samples inside the distorted ellipse:
-  filter(within == T) |>  
-  # Delete the last left beam of the within school swath in each radius:
-  group_by(radius) |>  
-  mutate(
-    within.red = if_else(
-      condition = angle == min(angle), 
+# Now we remove increasing layers of beams according to the DO value set
+if (overlap > 0) {
+  school.sf <- school.sf |> 
+    # Delete the last left beam of the within school swath in each radius:
+    group_by(radius) |>  
+    mutate(
+      corrected = if_else(angle == min(angle), F, within)
       # (we must delete one, so could have chosen the right instead the left one)
-      true = F, 
-      false = within 
-    )  
-  ) |> ungroup() |> 
-  select(angle:within, within.red) 
+    ) |> ungroup() 
+} 
+school.sf$corrected |> sum()
 
-# insert the column that identifies the distorted school minus 1 beam in beam.sf
-beam.sf$within.red1 <- F
-beam.sf$within.red1[beam.sf.red1$i] <- beam.sf.red1$within.red
+if (overlap > 100) {
+  school.sf <- school.sf |> 
+    # Delete the next last beam of the within school swath in each radius:
+    group_by(radius) |>  
+    mutate(
+      corrected = if_else(angle == max(angle), F, corrected)
+    ) |> ungroup() 
+} 
+school.sf$corrected |> sum()
 
-## 4.2 Remove 2 beams -------------
-#++++++++++++++++++++++++++++++++++
+if (overlap > 200) {
+  school.sf <- school.sf |> 
+    # Delete the next last beam of the within school swath in each radius:
+    group_by(radius) |>  
+    mutate(
+      # set the second minimum value to FALSE
+      corrected = if_else(angle == head(sort(angle), 2)[2], F, corrected)
+    ) |> ungroup() 
+} 
+school.sf$corrected |> sum()
 
-# When the overlap is 200%, we must remove TWO beams to correct the school size
+if (overlap > 300) {
+  school.sf <- school.sf |> 
+    # Delete the next last beam of the within school swath in each radius:
+    group_by(radius) |>  
+    mutate(
+      # set the second maximum value to F
+      corrected = if_else(angle == tail(sort(angle), 2)[1], F, corrected)
+    ) |> ungroup() 
+} 
+school.sf$corrected |> sum()
 
-# Subset the samples of the beam that are within the school minus two beams
-beam.sf.red2 <- beam.sf |> 
-  # For each radius, select the samples inside the distorted ellipse minus two 
-  filter(within == T)  |>  
-  group_by(radius) |> 
-  mutate(
-    within.red = if_else(
-      # Delete the last left and right beams of the within school swath in each radius:
-      condition = angle == max(angle) | angle == min(angle), 
-      true = F, 
-      false = within 
-    )  
-  ) |> ungroup() |>  
-  select(angle:within, within.red) 
+if (overlap > 400) {
+  school.sf <- school.sf |> 
+    # Delete the next last beam of the within school swath in each radius:
+    group_by(radius) |>  
+    mutate(
+      # set the third minimum value to F
+      corrected = if_else(angle == head(sort(angle), 3)[3], F, corrected)
+    ) |> ungroup() 
+} 
+school.sf$corrected |> sum()
 
-# insert the column that identifies the distorted school minus 2 beams in beam.sf
-beam.sf$within.red2 <- F
-beam.sf$within.red2[beam.sf.red2$i] <- beam.sf.red2$within.red
-
-
-## 4.3 Remove 3 beams -------------
-#+++++++++++++++++++++++++++++++++++
-
-# When the overlap is 300%, we must remove THREE beams to correct the school size
-
-# Subset the samples of the beam that are within the school minus 3 beams
-beam.sf.red3 <- beam.sf |> 
-  filter(within.red2 == T)  |>  
-  group_by(radius) |> 
-  mutate(
-    within.red = if_else(
-      # Delete the last left beam of the within school swath in each radius:
-      condition = angle == min(angle), 
-      true = F, 
-      false = within.red2 
-    )  
-  ) |>  ungroup()  |>  
-  select(angle:within, within.red) 
-
-# insert the column that identifies the distorted school minus 3 beams in beam.sf
-beam.sf$within.red3 <- F
-beam.sf$within.red3[beam.sf.red3$i] <- beam.sf.red3$within.red
-
-## 4.4 Remove 4 beams -------------
-#++++++++++++++++++++++++++++++++++
-
-# When the overlap is 400%, we must remove 4 beams to correct the school size
-
-# Subset the samples of the beam that are within the school minus 4 beams
-beam.sf.red4 <- beam.sf |> 
-  filter(within.red2 == T)  |>  
-  group_by(radius) |> 
-  mutate(
-    within.red = if_else(
-      # Delete the last left and right beams of the within school swath in each radius:
-      condition = angle == max(angle) | angle == min(angle), 
-      true = F, 
-      false = within.red2 
-    )  
-  ) |>  ungroup() |> 
-  select(angle:within, within.red) 
-
-# insert the column that identifies the distorted school minus 4 beams in beam.sf
-beam.sf$within.red4 <- F
-beam.sf$within.red4[beam.sf.red4$i] <- beam.sf.red4$within.red
+if (overlap > 500) {
+  school.sf <- school.sf |> 
+    # Delete the next last beam of the within school swath in each radius:
+    group_by(radius) |>  
+    mutate(
+      # set the third maximum value to F
+      corrected = if_else(angle == tail(sort(angle), 3)[1], F, corrected)
+    ) |> ungroup() 
+} 
+school.sf$corrected |> sum()
 
 
-## 4.5 Remove 5 beams -------------
-#++++++++++++++++++++++++++++++++++
 
-# Subset the samples of the beam that are within the school minus 5 beams
-# delete the last beam of the swath in each radius
-beam.sf.red5 <- beam.sf |> 
-  filter(within.red4 == T)  |>  
-  group_by(radius) |>  
-  mutate(
-    within.red = if_else(
-      # Delete the last left beam of the within school swath in each radius:
-      condition = angle == min(angle), 
-      true = F, 
-      false = within.red4 
-    )  
-  )  |>  ungroup() |> 
-  select(angle:within, within.red) 
-
-# insert the column that identifies the distorted school minus 5 beams in beam.sf
-beam.sf$within.red5 <- F
-beam.sf$within.red5[beam.sf.red5$i] <- beam.sf.red5$within.red
-
-
-## 4.6 Remove 5 beams -------------
-#++++++++++++++++++++++++++++++++++
-
-# Subset the samples of the beam that are within the school minus 6 beams
-# delete the last beam of the swath in each radius
-beam.sf.red6 <- beam.sf |> 
-  filter(within.red4 == T)  |>  
-  group_by(radius) |>  
-  mutate(
-    within.red = if_else(
-      # Delete the last left and right beams of the within school swath in each radius:
-      condition = angle == max(angle) | angle == min(angle), 
-      true = F, 
-      false = within.red4 
-    )  
-  )  |>  ungroup() |> 
-  select(angle:within, within.red) 
-
-# insert the column that identifies the distorted school minus 6 beams in beam.sf
-beam.sf$within.red6 <- F
-beam.sf$within.red6[beam.sf.red6$i] <- beam.sf.red6$within.red
-
-
-## 4.7 Plot  -------------
-#++++++++++++++++++++++++++
-if (overlap == 100) overlap.beam <- beam.sf.red1 
-if (overlap == 200) overlap.beam <- beam.sf.red2  
-if (overlap == 300) overlap.beam <- beam.sf.red3  
-if (overlap == 400) overlap.beam <- beam.sf.red4  
-if (overlap == 500) overlap.beam <- beam.sf.red5  
-if (overlap == 600) overlap.beam <- beam.sf.red6  
-
-if (overlap == 0) {
-  ggplot(beam.sf) + 
-    geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
-    geom_sf(data = beam.sf.red1, aes(geometry = geometry, size = (radius)/10), color = "pink")  +
-    geom_path(data = ellip.df, aes(x = x, y = y)) +
-    # scale_color_manual(values = c("red", "blue")) +
-    guides(size = "none")
-  
-} else {
-  ggplot(beam.sf) + 
-    # ggtitle(length(beam$angle)) +
-    geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
-    geom_sf(data = beam.sf.red1, aes(geometry = geometry, size = (radius)/10), color = "red")  +
-    # according to the degree of overlap, we have to change the number in the following  line:
-    geom_sf(data = overlap.beam, aes(geometry = geometry, size = (radius)/10, color = within.red))  +
-    geom_path(data = ellip.df, aes(x = x, y = y)) +
-    geom_path(data = ellip.cor.df, aes(x = x, y = y), color = "black", linetype = 2) +
-    scale_color_manual(values = c("red", "pink")) +
-    guides(size = "none") +
-    guides(color = "none")
-}
+if (overlap == 0) {colores <- c("pink","red")} else {colores <- c("red","pink")}
+ggplot(beam.sf) + 
+  # ggtitle(length(beam$angle)) +
+  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
+  geom_sf(data = beam.sf.red1, aes(geometry = geometry, size = (radius)/10), color = "red")  +
+  # according to the degree of overlap, we have to change the number in the following  line:
+  geom_sf(data = school.sf, aes(geometry = geometry, size = (radius)/10, color = corrected))  +
+  geom_path(data = ellip.df, aes(x = x, y = y)) +
+  geom_path(data = ellip.cor.df, aes(x = x, y = y), color = "black", linetype = 2) +
+  scale_color_manual(values =  colores) +
+  guides(size = "none") +
+  guides(color = "none")
 
