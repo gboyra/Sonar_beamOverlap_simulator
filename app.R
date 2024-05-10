@@ -22,7 +22,7 @@ library(sf)
 
 
 ui <- fluidPage(
-  titlePanel("Sonar beam overlap simulator"), 
+  titlePanel("Sonar beam-overlap distortion simulator"), 
   sidebarLayout(
     sidebarPanel(width = 4,
                  tags$h4("Simulation parameters"),
@@ -44,7 +44,7 @@ ui <- fluidPage(
                             sliderInput("rmax",
                                         "Maximum range (m):",
                                         min = 300,
-                                        max = 1000,
+                                        max = 700,
                                         value = 500),
                             sliderInput("delta.r",
                                         "Along-beam resolution (m):",
@@ -89,17 +89,15 @@ ui <- fluidPage(
                 tabPanel("Simulation results", 
                          plotOutput("sonarPlot"),
                          tags$h5("Interactive app to simulate the distortion caused by beam overlap
-                                 in the horizontal swath of a generic multibeam sonar. 
-                                 First, you must define the parameters of the multibeam sonar to simulate: 
-                                 The number of beams, the swath opening and the percentage of overlap, 
-                                 as well as the maximum range and resolution along transect (the number of samples per beam).
-                                 Then, you define the target, an idealized school of elliptical shape: 
+                                 in the horizontal swath of a generic multibeam sonar."), 
+                         tags$h5("First, define the parameters of the multibeam sonar: 
+                                 number of beams, swath opening and percentage of overlap, 
+                                 as well as the maximum range and resolution along beam (the size of the samples)."),
+                         tags$h5("Then, define the target, an idealized school of elliptical shape: 
                                  you can choose the horizontal and vertical diameters, the angle of the
                                  major axis and the range of the school. Based on these parameters, 
-                                 the app simulates the true target shape (pink area and dashed-line ellipse) 
-                                 after distortion correction with reference to the distorted ellipse 
-                                 (red area and continuous line ellipse).")
-                         
+                                 the app simulates the apparent and true target shape 
+                                 and calculates the percentage of areal distortion in the apparent target.")
                 ),
                 tabPanel("About", 
                          tags$br(),
@@ -180,33 +178,6 @@ server <- function(input, output) {
     
     # 4. Correct overlap distortion -------------
 
-    ## 4.1 Correct distortion on the ellipse -------------
-
-    a.cor <- input$diamx/2 - 2*(input$overlap/200 + 1/2)*input$ycm*tan(pi*phi.ang/360)*(abs(cos(pi*input$angle/180)))
-    b.cor <- input$diamy/2 - 2*(input$overlap/200 + 1/2)*input$ycm*tan(pi*phi.ang/360)*(abs(sin(pi*input$angle/180)))
-    
-    # plot the ellipse simulating the corrected school
-    # store the ellipse plot into a variable (to extract the points afterwards)
-    ellip.cor.ggplot <- ggplot() +
-      ggforce::geom_ellipse(aes(x0 = 0, y0 = input$ycm , a = a.cor, 
-                                b = b.cor, angle = pi*input$angle/180)) 
-    
-    # access the ggplot data using ggplot_build()
-    # store the ellipse points as a polygon in a df
-    ellip.cor.df <- ggplot_build(ellip.cor.ggplot)$data[[1]] |>
-      select(x, y) 
-    
-    # close the polygon adding the first row at the end:
-    ellip.cor <- ellip.cor.df |>  
-      rbind(ellip.cor.df[1,]) |> 
-      as.matrix() 
-    
-    # transform the ellipse into an sf object:
-    ellip.cor.sf <- sf::st_polygon(list(ellip.cor))
-    
-    
-    ## 4.2 Correct distortion on the swath samples -------------
-
     # Select the swath samples inside the distorted ellipse:
     school.sf <- beam.sf |> 
       filter(within == T) |> 
@@ -267,25 +238,48 @@ server <- function(input, output) {
           corrected = if_else(angle == tail(sort(angle), 3)[1], F, corrected)
         ) |> ungroup() 
     } 
+    school.sf <- school.sf |> mutate(Distortion = !corrected)
+    school.sf$Distortion[is.na(school.sf$Distortion)] <- T
     
-    # 5. Make the plot -------------
+    # 5. Estimate the distortion -------------
+    
+    # Calculate the area of the samples for each radius
+    school.sf <- school.sf |> 
+      mutate(
+        radius.plus = radius + delta.r,
+        Area = (phi.ang*pi/360)*(radius.plus^2 - radius^2)
+      )
+    
+    # Filter the distortion-corrected school
+    school.cor.sf <- school.sf |> filter(!Distortion)
+
+    # Estimate the area of the distorted school
+    Area.dist <- school.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
+    # Estimate the area of the distortion-corrected school
+    Area.cor <- school.cor.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
+    # Percentage of distortion:
+    Dist.pctg <- round(100*(Area.dist - Area.cor)/Area.dist)
+
+    # 6. Make the plot -------------
 
     # Select the manual colors so they work properly in both cases
-    if (input$overlap == 0) {colores <- c("pink","red")} else {colores <- c("red","pink")}
+    if (input$overlap == 0) {colores <- c("blue","red")} else {colores <- c("blue","red")}
     
     # Plots
     ggplot(beam.sf) + 
+      ggtitle(paste0("Distortion = ", Dist.pctg, "%"),
+              subtitle = paste("Apparent area:", Area.dist, "m2;", 
+                               "True area:", Area.cor, "m2")) +
       # plot the swath
       geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
       # plot the school (distorted and correct samples in different colors):
-      geom_sf(data = school.sf, aes(geometry = geometry, size = (radius)/10, color = corrected))  +
+      geom_sf(data = school.sf, aes(geometry = geometry, size = (radius)/10, color = Distortion))  +
       # distorted ellipse
       geom_path(data = ellip.df, aes(x = x, y = y)) +
-      # corrected ellipse
-      geom_path(data = ellip.cor.df, aes(x = x, y = y), color = "black", linetype = 2) +
       scale_color_manual(values =  colores) +
-      guides(size = "none") +
-      guides(color = "none")
+      guides(size = "none")  +
+      # guides(color = "none")
+      theme(legend.position = c(0.9, 0.15)) 
   })
   
 }
