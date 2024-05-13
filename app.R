@@ -17,7 +17,7 @@ library(shiny)
 library(dplyr)
 library(ggplot2)
 theme_set(theme_bw())
-
+# library(ggtext)
 library(sf)
 
 
@@ -52,11 +52,11 @@ ui <- fluidPage(
                                         max = 10,
                                         value = 5),
                             sliderInput("overlap",
-                                        "Degree of overlap (%):",
+                                        "Degree of overlap:",
                                         min = 0,
-                                        max = 600,
-                                        step = 100,
-                                        value = 200)
+                                        max = 6,
+                                        step = 1,
+                                        value = 2)
                    ),  # cierre tabPanel("Sonar")
                    
                    tabPanel("Target", 
@@ -70,12 +70,12 @@ ui <- fluidPage(
                                         "Horizontal diameter (m):",
                                         min = 50,
                                         max = 250,
-                                        value = 150), 
+                                        value = 200), 
                             sliderInput("diamy",
                                         "Vertical diameter (m):",
                                         min = 25,
                                         max = 125,
-                                        value = 50), 
+                                        value = 75), 
                             sliderInput("angle",
                                         "Major axis angle:",
                                         min = -90,
@@ -87,17 +87,16 @@ ui <- fluidPage(
     mainPanel(width = 8,
               tabsetPanel(
                 tabPanel("Simulation results", 
-                         plotOutput("sonarPlot"),
                          tags$h5("Interactive app to simulate the distortion caused by beam overlap
-                                 in the horizontal swath of a generic multibeam sonar."), 
-                         tags$h5("First, define the parameters of the multibeam sonar: 
-                                 number of beams, swath opening and percentage of overlap, 
-                                 as well as the maximum range and resolution along beam (the size of the samples)."),
-                         tags$h5("Then, define the target, an idealized school of elliptical shape: 
-                                 you can choose the horizontal and vertical diameters, the angle of the
-                                 major axis and the range of the school. Based on these parameters, 
-                                 the app simulates the apparent and true target shape 
-                                 and calculates the percentage of areal distortion in the apparent target.")
+                                 on the swath of a generic multibeam sonar."), 
+                         tags$h5("Define the parameters of (1) the generic multibeam sonar and (2) the target shown on the
+                                  sonar echogram, an idealized  elliptical-shape fish school of adjustable size and orientation."),
+                         tags$h5("Based on these parameters, the app simulates the true target shape 
+                                  after correcting for overlap distortion, and calculates the 
+                                  percentage of areal distortion in the apparent target."),
+                          verbatimTextOutput("phi.ang"),
+                         verbatimTextOutput("phi.bw"),
+                         plotOutput("sonarPlot")
                 ),
                 tabPanel("About", 
                          tags$br(),
@@ -121,6 +120,13 @@ ui <- fluidPage(
   
 )  # cierre fluidPage()
 server <- function(input, output) {
+  output$phi.ang <- renderText({
+    paste("Angular separation between beams =", round(input$beamwidth/input$N, 1), "degrees")
+  })
+  output$phi.bw <- renderText({
+    paste("Individual beamwidth =", round((input$beamwidth/input$N)*(input$overlap + 1), 1), "degrees")
+  })
+  
   
   output$sonarPlot <- renderPlot({
     
@@ -175,101 +181,111 @@ server <- function(input, output) {
         i = cumsum(i), 
         within = ifelse(i %in% index, T, F)
       )
-    
+
     # 4. Correct overlap distortion -------------
 
     # Select the swath samples inside the distorted ellipse:
-    school.sf <- beam.sf |> 
-      filter(within == T) |> 
-      mutate(corrected = T) |> 
-      select(angle:within, corrected) 
+    school.sf <- beam.sf |>
+      filter(within == T) |>
+      mutate(corrected = T) |>
+      select(angle:within, corrected)
 
     # Remove increasing layers of beams according to the degree of overlap (DO)
     if (input$overlap > 0) {
-      school.sf <- school.sf |> 
+      school.sf <- school.sf |>
         # Delete the last left beam of the within school swath in each radius:
-        group_by(radius) |>  
+        group_by(radius) |>
         mutate(
           corrected = if_else(angle == min(angle), F, within)
           # (we must delete one, so could have chosen the right instead the left one)
-        ) |> ungroup() 
-    } 
-    if (input$overlap > 100) {
-      school.sf <- school.sf |> 
+        ) |> ungroup()
+    }
+    if (input$overlap > 1) {
+      school.sf <- school.sf |>
         # Delete the last right beam of the within school swath in each radius:
-        group_by(radius) |>  
+        group_by(radius) |>
         mutate(
           corrected = if_else(angle == max(angle), F, corrected)
-        ) |> ungroup() 
-    } 
-    if (input$overlap > 200) {
-      school.sf <- school.sf |> 
+        ) |> ungroup()
+    }
+    if (input$overlap > 2) {
+      school.sf <- school.sf |>
         # Delete the second minimum beam of the within school swath in each radius:
-        group_by(radius) |>  
+        group_by(radius) |>
         mutate(
           # set the second minimum value to FALSE
           corrected = if_else(angle == head(sort(angle), 2)[2], F, corrected)
-        ) |> ungroup() 
-    } 
-    if (input$overlap > 300) {
-      school.sf <- school.sf |> 
+        ) |> ungroup()
+    }
+    if (input$overlap > 3) {
+      school.sf <- school.sf |>
         # Delete the second maximum beam of the within school swath in each radius:
-        group_by(radius) |>  
+        group_by(radius) |>
         mutate(
           # set the second maximum value to FALSE
           corrected = if_else(angle == tail(sort(angle), 2)[1], F, corrected)
-        ) |> ungroup() 
-    } 
-    if (input$overlap > 400) {
-      school.sf <- school.sf |> 
+        ) |> ungroup()
+    }
+    if (input$overlap > 4) {
+      school.sf <- school.sf |>
         # Delete the next minimum beam of the within school swath in each radius:
-        group_by(radius) |>  
+        group_by(radius) |>
         mutate(
           # set the third minimum value to FALSE
           corrected = if_else(angle == head(sort(angle), 3)[3], F, corrected)
-        ) |> ungroup() 
-    } 
-    if (input$overlap > 500) {
-      school.sf <- school.sf |> 
+        ) |> ungroup()
+    }
+    if (input$overlap > 5) {
+      school.sf <- school.sf |>
         # Delete the next maximum beam of the within school swath in each radius:
-        group_by(radius) |>  
+        group_by(radius) |>
         mutate(
           # set the third maximum value to FALSE
           corrected = if_else(angle == tail(sort(angle), 3)[1], F, corrected)
-        ) |> ungroup() 
-    } 
+        ) |> ungroup()
+    }
     school.sf <- school.sf |> mutate(Distortion = !corrected)
     school.sf$Distortion[is.na(school.sf$Distortion)] <- T
-    
+
     # 5. Estimate the distortion -------------
-    
+
     # Calculate the area of the samples for each radius
-    school.sf <- school.sf |> 
+  
+    # Calculate the area of the samples for each radius
+    school.sf <- school.sf |>
       mutate(
-        radius.plus = radius + delta.r,
+        radius.plus = radius + input$delta.r,
         Area = (phi.ang*pi/360)*(radius.plus^2 - radius^2)
       )
-    
+
     # Filter the distortion-corrected school
     school.cor.sf <- school.sf |> filter(!Distortion)
 
+    # Estimate the area of the distorted ellipse:
+    Area.ellipse <- round(st_area(ellip.sf))
     # Estimate the area of the distorted school
-    Area.dist <- school.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
+    # Area.dist <- school.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
+    Area.dist <- school.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
     # Estimate the area of the distortion-corrected school
-    Area.cor <- school.cor.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
+    # Area.cor <- school.cor.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
+    Area.cor <- school.cor.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
     # Percentage of distortion:
     Dist.pctg <- round(100*(Area.dist - Area.cor)/Area.dist)
 
     # 6. Make the plot -------------
 
     # Select the manual colors so they work properly in both cases
-    if (input$overlap == 0) {colores <- c("blue","red")} else {colores <- c("blue","red")}
-    
+    if (input$overlap == 0) {colores <- c("blue","red")} else {
+      if (length(unique(school.sf$Distortion)) == 2)
+      colores <- c("blue","red") else colores <- "red"
+      }
+
     # Plots
-    ggplot(beam.sf) + 
+    ggplot(beam.sf) +
       ggtitle(paste0("Distortion = ", Dist.pctg, "%"),
-              subtitle = paste("Apparent area:", Area.dist, "m2;", 
-                               "True area:", Area.cor, "m2")) +
+              subtitle = paste("Apparent area:", Area.dist, "m^2;",
+                               "Ellipse area:", Area.ellipse, "m^2",
+                               "True area:", Area.cor, "m^2")) +
       # plot the swath
       geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
       # plot the school (distorted and correct samples in different colors):
@@ -279,7 +295,7 @@ server <- function(input, output) {
       scale_color_manual(values =  colores) +
       guides(size = "none")  +
       # guides(color = "none")
-      theme(legend.position = c(0.9, 0.15)) 
+      theme(legend.position = c(0.9, 0.15))
   })
   
 }
