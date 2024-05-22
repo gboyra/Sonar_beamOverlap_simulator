@@ -7,7 +7,7 @@
 # to improve the interpretation of the info provided by sonars 
 #
 # Created by Guillermo Boyra to simulate a Simrad SN90 in February 2023
-# Generalized for different multibeam sonar systems in May 2023
+# Generalized for different multibeam sonar systems in May 2024?
 
 
 # load libraries
@@ -22,9 +22,12 @@ library(sf)
 
 
 ui <- fluidPage(
-  titlePanel("Sonar beam-overlap distortion simulator"), 
+  titlePanel("Sonar beam-overlap distortion simulation"), 
   sidebarLayout(
     sidebarPanel(width = 4,
+                 radioButtons(inputId = "simDir", label = "Simulation type:",
+                              choices = c("Forward" = "forward", "Inverse" = "inverse"), 
+                              inline = T, selected = "inverse"),
                  tags$h4("Simulation parameters"),
                  tabsetPanel(
                    tabPanel("Sonar", 
@@ -44,7 +47,7 @@ ui <- fluidPage(
                             sliderInput("rmax",
                                         "Maximum range (m):",
                                         min = 300,
-                                        max = 700,
+                                        max = 900,
                                         value = 500),
                             sliderInput("delta.r",
                                         "Along-beam resolution (m):",
@@ -64,15 +67,15 @@ ui <- fluidPage(
                             sliderInput("ycm",
                                         "Target range (m):",
                                         min = 50,
-                                        max = 350,
+                                        max = 800,
                                         value = 200), 
                             sliderInput("diamx",
-                                        "Horizontal diameter (m):",
+                                        "Major diameter (m):",
                                         min = 50,
                                         max = 250,
                                         value = 200), 
                             sliderInput("diamy",
-                                        "Vertical diameter (m):",
+                                        "Minor diameter (m):",
                                         min = 25,
                                         max = 125,
                                         value = 75), 
@@ -89,6 +92,8 @@ ui <- fluidPage(
                 tabPanel("Simulation results", 
                          tags$h5("Interactive app to simulate the distortion caused by beam overlap
                                  on the swath of a generic multibeam sonar."), 
+                         tags$h5("The simulation can work forward, distorting the shape of a true school,
+                                 or in inverse direction, correcting the shape of a distorted school."), 
                          tags$h5("Define the parameters of (1) the generic multibeam sonar and (2) the target shown on the
                                   sonar echogram, an idealized  elliptical-shape fish school of adjustable size and orientation."),
                          tags$h5("Based on these parameters, the app simulates the true target shape 
@@ -131,21 +136,29 @@ server <- function(input, output) {
   output$sonarPlot <- renderPlot({
     
     # 1. Define the sonar swath ------------
-    phi.ang <- input$beamwidth/input$N
-    beam <- as.data.frame(expand.grid(
+    #+++++++++++++++++++++++++++++++++++++++
+
+        phi.ang <- input$beamwidth/input$N
+    swath <- as.data.frame(expand.grid(
       angle = seq(-input$beamwidth/2 + phi.ang/2, input$beamwidth/2 - phi.ang/2, by = phi.ang), 
       radius = seq(0, input$rmax, by = input$delta.r)))
-    beam <- beam  |>  
+    swath <- swath  |>  
       mutate(
         value = 0, 
         x = radius*sin(angle*pi/180), 
         y = radius*cos(angle*pi/180)
-      ) 
-    beam.sf <- sf::st_as_sf(beam, coords = c("x", "y"))
+      ) |> 
+      group_by(radius) |> 
+      mutate(beam = 1:length(angle)) |> 
+      ungroup()
+    
+    swath.sf <- sf::st_as_sf(swath, coords = c("x", "y"))
     
     
     # 2. Define the idealized elliptical school --------------
-    # plot the beam and an ellipse simulating the school
+    #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+    # plot the swath and an ellipse simulating the school
     # store the ellipse plot into a variable (to extract the points afterwards)
     ellip.ggplot <- ggplot() +
       ggforce::geom_ellipse(aes(x0 = 0, y0 = input$ycm , a = input$diamx/2, 
@@ -166,130 +179,170 @@ server <- function(input, output) {
     # transform the ellipse into an sf object:
     ellip.sf <- sf::st_polygon(list(ellip))
     
-    # 3. Select those points of the swath inside the distorted ellipse ------
-    large.beam.sf <- sf::st_within(x = beam.sf, y = ellip.sf)
+    # 3. Select swath samples inside the ellipse ------
+    #++++++++++++++++++++++++++++++++++++++++++++++++++
+
+    ellipse.swath.sf <- sf::st_within(x = swath.sf, y = ellip.sf)
     # I think that st_contains() would be the proper function, 
     # but st_within() works as well
     
     # Extract the index of the inner points into "index":
-    index <- as.data.frame(large.beam.sf)[[1]]
+    index <- as.data.frame(ellipse.swath.sf)[[1]]
     
-    # Identify the inner points in beam.sf in the column "within"
-    beam.sf <- beam.sf |>
+    # Identify the inner points in swath.sf in the column "target.ini"
+    swath.sf <- swath.sf |>
       mutate(
         i = 1, 
         i = cumsum(i), 
-        within = ifelse(i %in% index, T, F)
+        target.ini = ifelse(i %in% index, T, F)
       )
 
     # 4. Correct overlap distortion -------------
+    #++++++++++++++++++++++++++++++++++++++++++++
+    
+    ## 4.1 Remove/Add overlapped beams -------------
+    #+++++++++++++++++++++++++++++++++++++++++++++++
 
-    # Select the swath samples inside the distorted ellipse:
-    school.sf <- beam.sf |>
-      filter(within == T) |>
-      mutate(corrected = T) |>
-      select(angle:within, corrected)
+    ### 4.1.1 Create the target object ---------------
+    #+++++++++++++++++++++++++++++++++++++++++++++++++
 
-    # Remove increasing layers of beams according to the degree of overlap (DO)
+      target.sf <- swath.sf |> 
+      group_by(radius) |> 
+      mutate(
+        empty.range = sum(target.ini), 
+        # identify ranges without detection:
+        empty.range = if_else(empty.range == 0, T, F), 
+        # identify the minimum and maximum target detecting beams per radius:
+        min.beam = beam[min(which(target.ini == T))], 
+        max.beam = beam[max(which(target.ini == T))]
+      ) |> 
+      ungroup() |> 
+      # remove empty ranges:
+      filter(empty.range == F) |> 
+      # initialize reduced and increased targets:
+      mutate(
+        # reduced target (to use in inverse simulations):
+        target.minus = target.ini, 
+        # increased target (to use in forward simulations):
+        target.plus = target.ini
+      ) 
+
+    ### 4.1.2 Incremental addition/removal of distortion beams ------
+    #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    
     if (input$overlap > 0) {
-      school.sf <- school.sf |>
-        # Delete the last left beam of the within school swath in each radius:
-        group_by(radius) |>
+      target.sf <- target.sf |> 
         mutate(
-          corrected = if_else(angle == min(angle), F, within)
-          # (we must delete one, so could have chosen the right instead the left one)
-        ) |> ungroup()
+          # forward - add 1 beam to the left of the minimum beam:
+          target.plus = if_else(beam == min.beam - 1, T, target.plus), 
+          # inverse - remove the minimum (leftmost) beam:
+          target.minus = if_else(beam == min.beam, F, target.minus)
+        )
     }
     if (input$overlap > 1) {
-      school.sf <- school.sf |>
-        # Delete the last right beam of the within school swath in each radius:
-        group_by(radius) |>
+      target.sf <- target.sf |> 
         mutate(
-          corrected = if_else(angle == max(angle), F, corrected)
-        ) |> ungroup()
+          # forward - add 1 beams to the right of the maximum beam:
+          target.plus = if_else(beam == max.beam + 1, T, target.plus), 
+          # inverse - remove the maximum (rightmost) beam:
+          target.minus = if_else(beam == max.beam, F, target.minus)
+        )
     }
     if (input$overlap > 2) {
-      school.sf <- school.sf |>
-        # Delete the second minimum beam of the within school swath in each radius:
-        group_by(radius) |>
+      target.sf <- target.sf |> 
         mutate(
-          # set the second minimum value to FALSE
-          corrected = if_else(angle == head(sort(angle), 2)[2], F, corrected)
-        ) |> ungroup()
+          # forward - add 2 beams to the left of the minimum beam:
+          target.plus = if_else(beam == min.beam - 2, T, target.plus), 
+          # inverse - remove the 2nd minimum beam:
+          target.minus = if_else(beam == min.beam + 1, F, target.minus)
+        )
     }
     if (input$overlap > 3) {
-      school.sf <- school.sf |>
-        # Delete the second maximum beam of the within school swath in each radius:
-        group_by(radius) |>
+      target.sf <- target.sf |> 
         mutate(
-          # set the second maximum value to FALSE
-          corrected = if_else(angle == tail(sort(angle), 2)[1], F, corrected)
-        ) |> ungroup()
+          # forward - add 2 beams to the right of the maximum beam:
+          target.plus = if_else(beam == max.beam + 2, T, target.plus), 
+          # inverse - remove the 2nd maximum beam:
+          target.minus = if_else(beam == max.beam - 1, F, target.minus)
+        )
     }
     if (input$overlap > 4) {
-      school.sf <- school.sf |>
-        # Delete the next minimum beam of the within school swath in each radius:
-        group_by(radius) |>
+      target.sf <- target.sf |> 
         mutate(
-          # set the third minimum value to FALSE
-          corrected = if_else(angle == head(sort(angle), 3)[3], F, corrected)
-        ) |> ungroup()
+          # forward - add 3 beams to the left of the minimum beam:
+          target.plus = if_else(beam == min.beam - 3, T, target.plus), 
+          # inverse - remove the 3rd minimum beam:
+          target.minus = if_else(beam == min.beam + 2, F, target.minus)
+        )
     }
     if (input$overlap > 5) {
-      school.sf <- school.sf |>
-        # Delete the next maximum beam of the within school swath in each radius:
-        group_by(radius) |>
+      target.sf <- target.sf |> 
         mutate(
-          # set the third maximum value to FALSE
-          corrected = if_else(angle == tail(sort(angle), 3)[1], F, corrected)
-        ) |> ungroup()
+          # forward - add 3 beams to the right of the maximum beam:
+          target.plus = if_else(beam == max.beam + 3, T, target.plus), 
+          # inverse - remove the 3rd maximum beam:
+          target.minus = if_else(beam == max.beam - 2, F, target.minus)
+        )
     }
-    school.sf <- school.sf |> mutate(Distortion = !corrected)
-    school.sf$Distortion[is.na(school.sf$Distortion)] <- T
 
-    # 5. Estimate the distortion -------------
+    # Select the increased/reduced target depending on the type of simulation:
+    if (input$simDir == "forward") {
+      target.sf <- target.sf |> 
+        filter(target.plus == T) |> 
+        select(angle:geometry, target.ini) |> 
+        mutate(Distortion = !target.ini)
+    } else {
+      target.sf <- target.sf |> 
+        filter(target.ini == T) |> 
+        select(angle:geometry, target.minus) |> 
+        mutate(Distortion = !target.minus)
+    }
+    
+    target.sf$SampleType <- if_else(target.sf$Distortion, "Distortion", "School")
 
+    ## 4.2 Estimate the distortion % -------------
+    #+++++++++++++++++++++++++++++++++++++++++++++
+    
     # Calculate the area of the samples for each radius
-  
-    # Calculate the area of the samples for each radius
-    school.sf <- school.sf |>
+    target.sf <- target.sf |>
       mutate(
         radius.plus = radius + input$delta.r,
         Area = (phi.ang*pi/360)*(radius.plus^2 - radius^2)
       )
 
-    # Filter the distortion-corrected school
-    school.cor.sf <- school.sf |> filter(!Distortion)
+    # Filter the distortion-corrected target
+    target.cor.sf <- target.sf |> filter(!Distortion)
 
     # Estimate the area of the distorted ellipse:
     Area.ellipse <- round(st_area(ellip.sf))
-    # Estimate the area of the distorted school
-    # Area.dist <- school.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
-    Area.dist <- school.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
-    # Estimate the area of the distortion-corrected school
-    # Area.cor <- school.cor.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
-    Area.cor <- school.cor.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
+    # Estimate the area of the distorted target
+    # Area.dist <- target.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
+    Area.dist <- target.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
+    # Estimate the area of the distortion-corrected target
+    # Area.cor <- target.cor.sf |> st_set_geometry(NULL) |>  summarise(round(sum(Area))) |> pull()
+    Area.cor <- target.cor.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
     # Percentage of distortion:
     Dist.pctg <- round(100*(Area.dist - Area.cor)/Area.dist)
 
-    # 6. Make the plot -------------
-
+    # 5. Make the plot -------------
+    #+++++++++++++++++++++++++++++++
+    
     # Select the manual colors so they work properly in both cases
     if (input$overlap == 0) {colores <- c("blue","red")} else {
-      if (length(unique(school.sf$Distortion)) == 2)
-      colores <- c("blue","red") else colores <- "red"
+      if (length(unique(target.sf$SampleType)) == 2)
+      colores <- c("red","blue") else colores <- "red"
       }
 
     # Plots
-    ggplot(beam.sf) +
+    ggplot(swath.sf) +
       ggtitle(paste0("Distortion = ", Dist.pctg, "%"),
               subtitle = paste("Apparent area:", Area.dist, "m^2;",
                                "Ellipse area:", Area.ellipse, "m^2",
                                "True area:", Area.cor, "m^2")) +
       # plot the swath
-      geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
-      # plot the school (distorted and correct samples in different colors):
-      geom_sf(data = school.sf, aes(geometry = geometry, size = (radius)/10, color = Distortion))  +
+      geom_sf(data = swath.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
+      # plot the target (distorted and correct samples in different colors):
+      geom_sf(data = target.sf, aes(geometry = geometry, size = (radius)/10, color = SampleType))  +
       # distorted ellipse
       geom_path(data = ellip.df, aes(x = x, y = y)) +
       scale_color_manual(values =  colores) +
