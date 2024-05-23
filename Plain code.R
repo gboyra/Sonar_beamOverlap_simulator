@@ -26,49 +26,55 @@ phi.ang <- beamwidth/N
 overlap <- 2
 
 
-beam <- expand.grid(
+swath <- expand.grid(
   # polar coordinates:
   angle = seq(-beamwidth/2 + phi.ang/2, beamwidth/2 - phi.ang/2, by = phi.ang), 
   radius = seq(0, rmax, by = delta.r)) |>
   as.data.frame() |> 
     mutate(
-    value = 0,   # what do we need this value for?
-    # cartesian coordinates:
+    value = 0,   
+    # Cartesian coordinates:
     x = radius*sin(angle*pi/180), 
     y = radius*cos(angle*pi/180)
-  ) 
+  ) |> group_by(radius) |> 
+  mutate(beam = 1:length(angle)) |> 
+  ungroup()
 
 
-unique(beam$angle) |> length() == N  # TRUE (cqd)
+unique(swath$angle) |> length() == N  # TRUE (cqd)
 
 # convert it into a spatial object:
-beam.sf <- sf::st_as_sf(beam, coords = c("x", "y"))
-# beam.sf is a df but with the coordinates inside a list column named "geometry" 
-str(beam.sf)
+swath.sf <- sf::st_as_sf(swath, coords = c("x", "y"))
+# swath.sf is a df but with the coordinates inside a list column named "geometry" 
+str(swath.sf)
 
 # Plot the swath of beams:
-ggplot(beam.sf) + 
+ggplot(swath.sf) + 
   # make the size fo the circles proportional to the radius (so they increase with distance)
-  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
+  geom_sf(data = swath.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
   # remove the legend
   guides(size = "none")
 
 # Plot Figure 3 - :
-ggplot(beam.sf) + 
+ggplot(swath.sf) + 
   # make the size fo the circles proportional to the radius (so they increase with distance)
-  geom_sf(data = beam.sf, aes(geometry = geometry), color = "black")  +
+  geom_sf(data = swath.sf, aes(geometry = geometry), color = "black")  +
   # remove the legend
   guides(size = "none") +
   xlab("x") + ylab("y")
 
 
 
-# 2. Define the distorted school ----------
+# 2. Define the target ----------
 
-# In this version of the software, we define the distorted school
+# If simDir == "inverse", we define the OBSERVED target
 # and the simulator estimates the corrected version that could have produced it
 
-# Along-beam distance to the school CM (m):
+# If simDir == "forward", we define the TRUE target
+# and the simulator estimates the distorted version the sonar generates
+
+
+# Along-beam distance to the target CM (m):
 ycm = 60
 # Horizontal diameter (m):
 diamx = 50
@@ -77,7 +83,7 @@ diamy = 25
 # Major axis angle (degrees):
 angle = 0
 
-# plot the beam and an ellipse simulating the school
+# plot the swath and an ellipse simulating the school
 # store the ellipse plot into a variable (to extract the points afterwards)
 ellip.ggplot <- ggplot() +
   ggforce::geom_ellipse(aes(x0 = 0, y0 = ycm , a = diamx/2, 
@@ -99,53 +105,53 @@ ellip <- ellip.df |>
 ellip.sf <- sf::st_polygon(list(ellip))
 
 # plot the swath and ellipse together
-ggplot(beam.sf) + 
-  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
+ggplot(swath.sf) + 
+  geom_sf(data = swath.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
   geom_path(data = ellip.df, aes(x = x, y = y), color = "red", linewidth = 2 ) +
   guides(size = "none")
 
 
 # plot the swath and ellipse together
 # Figure 3 - bottom
-ggplot(beam.sf) + 
-  geom_sf(data = beam.sf, aes(geometry = geometry), color = "black")  +
+ggplot(swath.sf) + 
+  geom_sf(data = swath.sf, aes(geometry = geometry), color = "black")  +
   geom_path(data = ellip.df, aes(x = x, y = y), color = "red", linewidth = 2 ) +
   guides(size = "none")
 
 # 3. Select the swath samples inside the school ellipse ------------
 
-# Select those points of the swath inside the distorted ellipse
-large.beam.sf <- sf::st_within(x = beam.sf, y = ellip.sf)
+# Select those points of the swath inside the initial ellipse
+ellipse.swath.sf <- sf::st_within(x = swath.sf, y = ellip.sf)
 # I think that st_contains() would be the proper function, 
 # but st_within() works as well
 
 # Extract the index of the inner points into "index":
-index <- as.data.frame(large.beam.sf)[[1]]
+index <- as.data.frame(ellipse.swath.sf)[[1]]
 
-# Identify the inner points in beam.sf in the column "within"
-beam.sf <- beam.sf  |> 
+# Identify the inner points in swath.sf in the column "target.ini"
+swath.sf <- swath.sf  |> 
   mutate(
     i = 1, 
     i = cumsum(i), 
-    # this is T when the swath coincides within the distorted school
-    within = ifelse(i %in% index, T, F)
+    # this is T when the swath coincides within the distorted target
+    target.ini = ifelse(i %in% index, T, F)
   )
 
 # plot the swath and ellipse together
-ggplot(beam.sf) + 
-  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey80")  +
-  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey80")  +
-  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10, color = within))  +
+ggplot(swath.sf) + 
+  geom_sf(data = swath.sf, aes(geometry = geometry, size = (radius)/10), color = "grey80")  +
+  geom_sf(data = swath.sf, aes(geometry = geometry, size = (radius)/10), color = "grey80")  +
+  geom_sf(data = swath.sf, aes(geometry = geometry, size = (radius)/10, color = target.ini))  +
   scale_color_manual(values = c("grey80", "pink4")) +
   geom_path(data = ellip.df, aes(x = x, y = y), color = "black", linewidth = 1 ) +
   guides(size = "none")
 
 # Figure 3 
 # plot the swath and ellipse together
-ggplot(beam.sf) + 
-  geom_sf(data = beam.sf, aes(geometry = geometry), color = "black")  +
-  geom_sf(data = beam.sf, aes(geometry = geometry), color = "black")  +
-  geom_sf(data = beam.sf, aes(geometry = geometry, color = within))  +
+ggplot(swath.sf) + 
+  geom_sf(data = swath.sf, aes(geometry = geometry), color = "black")  +
+  geom_sf(data = swath.sf, aes(geometry = geometry), color = "black")  +
+  geom_sf(data = swath.sf, aes(geometry = geometry, color = target.ini))  +
   scale_color_manual(values = c("black", "red")) +
   geom_path(data = ellip.df, aes(x = x, y = y), color = "red", linewidth = 2 ) +
   guides(size = "none") +
@@ -158,8 +164,10 @@ ggplot(beam.sf) +
 #++++++++++++++++++++++++++++++++++++++++++++
 
 
-## 4.1 Correct the ellipse -------------
-#++++++++++++++++++++++++++++++++++++++++++++
+## 4.1 Correct the ellipse (NOT USED) -------------
+#++++++++++++++++++++++++++++++++++++++++++++++++++
+#+
+# IMP: Intentarlo con st_boundary()
 
 a.cor <- diamx/2 - 2*(overlap + 1/2)*ycm*tan(pi*phi.ang/360)*(abs(cos(pi*angle/180)))
 b.cor <- diamy/2 - 2*(overlap + 1/2)*ycm*tan(pi*phi.ang/360)*(abs(sin(pi*angle/180)))
@@ -184,133 +192,140 @@ ellip.cor <- ellip.cor.df |>
 ellip.cor.sf <- sf::st_polygon(list(ellip.cor))
 
 
-## 4.2 Remove overlapped beams -------------
-#+++++++++++++++++++++++++++++++++++++++++++
-overlap = 2
 
-# Select the samples inside the distorted ellipse:
-school.sf <- beam.sf |> 
-  filter(within == T) |> 
-  mutate(corrected = T) |> 
-  select(angle:within, corrected) 
-school.sf$corrected |> sum()
+## 4.2 Remove/add overlapped beams -------------
+#+++++++++++++++++++++++++++++++++++++++++++++++
+overlap = 6
 
-# Now we remove increasing layers of beams according to the DO value set
-if (overlap > 0) {
-  school.sf <- school.sf |> 
-    # Delete the last left beam of the within school swath in each radius:
-    group_by(radius) |>  
+target.sf <- swath.sf |> 
+  group_by(radius) |> 
+  mutate(
+    empty.range = sum(target.ini), 
+    empty.range = if_else(empty.range == 0, T, F), 
+    min.beam = beam[min(which(target.ini == T))], 
+    max.beam = beam[max(which(target.ini == T))]
+  ) |> 
+  ungroup() |> 
+  filter(empty.range == F) |> 
+  mutate(
+    target.minus = target.ini, 
+    target.plus = target.ini
+  ) 
+target.sf |> st_drop_geometry() |>  summarise(sum(target.ini), sum(target.plus), sum(target.minus)) 
+
+
+ if (overlap > 0) {
+  target.sf <- target.sf |> 
     mutate(
-      corrected = if_else(angle == min(angle), F, within)
-      # (we must delete one, so could have chosen the right instead the left one)
-    ) |> ungroup() 
-} 
-school.sf$corrected |> sum()
+      target.plus = if_else(beam == min.beam - 1, T, target.plus), 
+      target.minus = if_else(beam == min.beam, F, target.minus)
+    )
+}
+target.sf |> st_drop_geometry() |>  summarise(sum(target.ini), sum(target.plus), sum(target.minus)) 
 
-if (overlap > 100) {
-  school.sf <- school.sf |> 
-    # Delete the next last beam of the within school swath in each radius:
-    group_by(radius) |>  
+if (overlap > 1) {
+  target.sf <- target.sf |> 
     mutate(
-      corrected = if_else(angle == max(angle), F, corrected)
-    ) |> ungroup() 
-} 
-school.sf$corrected |> sum()
+      target.plus = if_else(beam == max.beam + 1, T, target.plus), 
+      target.minus = if_else(beam == max.beam, F, target.minus)
+    )
+}
+target.sf |> st_drop_geometry() |>  summarise(sum(target.ini), sum(target.plus), sum(target.minus)) 
 
 if (overlap > 2) {
-  school.sf <- school.sf |> 
-    # Delete the next last beam of the within school swath in each radius:
-    group_by(radius) |>  
+  target.sf <- target.sf |> 
     mutate(
-      # set the second minimum value to FALSE
-      corrected = if_else(angle == head(sort(angle), 2)[2], F, corrected)
-    ) |> ungroup() 
-} 
-school.sf$corrected |> sum()
+      target.plus = if_else(beam == min.beam - 2, T, target.plus), 
+      target.minus = if_else(beam == min.beam + 1, F, target.minus)
+    )
+}
+target.sf |> st_drop_geometry() |>  summarise(sum(target.ini), sum(target.plus), sum(target.minus)) 
 
 if (overlap > 3) {
-  school.sf <- school.sf |> 
-    # Delete the next last beam of the within school swath in each radius:
-    group_by(radius) |>  
+  target.sf <- target.sf |> 
     mutate(
-      # set the second maximum value to F
-      corrected = if_else(angle == tail(sort(angle), 2)[1], F, corrected)
-    ) |> ungroup() 
-} 
-school.sf$corrected |> sum()
+      target.plus = if_else(beam == max.beam + 2, T, target.plus), 
+      target.minus = if_else(beam == max.beam - 1, F, target.minus)
+    )
+}
+target.sf |> st_drop_geometry() |>  summarise(sum(target.ini), sum(target.plus), sum(target.minus)) 
 
 if (overlap > 4) {
-  school.sf <- school.sf |> 
-    # Delete the next last beam of the within school swath in each radius:
-    group_by(radius) |>  
+  target.sf <- target.sf |> 
     mutate(
-      # set the third minimum value to F
-      corrected = if_else(angle == head(sort(angle), 3)[3], F, corrected)
-    ) |> ungroup() 
-} 
-school.sf$corrected |> sum()
+      target.plus = if_else(beam == min.beam - 3, T, target.plus), 
+      target.minus = if_else(beam == min.beam + 2, F, target.minus)
+    )
+}
+target.sf |> st_drop_geometry() |>  summarise(sum(target.ini), sum(target.plus), sum(target.minus)) 
 
 if (overlap > 5) {
-  school.sf <- school.sf |> 
-    # Delete the next last beam of the within school swath in each radius:
-    group_by(radius) |>  
+  target.sf <- target.sf |> 
     mutate(
-      # set the third maximum value to F
-      corrected = if_else(angleS == tail(sort(angle), 3)[1], F, corrected)
-    ) |> ungroup() 
-} 
-school.sf$corrected |> sum()
+      target.plus = if_else(beam == max.beam + 3, T, target.plus), 
+      target.minus = if_else(beam == max.beam - 2, F, target.minus)
+    )
+}
+target.sf |> st_drop_geometry() |>  summarise(sum(target.ini), sum(target.plus), sum(target.minus)) 
 
+simDir <- "forward"
 
+# Select the increased/reduced target depending on the type of simulation:
+if (simDir == "forward") {
+  target.sf <- target.sf |> 
+    filter(target.plus == T) |> 
+    select(angle:geometry, target.ini) |> 
+    mutate(Distortion = !target.ini)
+} else {
+  target.sf <- target.sf |> 
+    filter(target.ini == T) |> 
+    select(angle:geometry, target.minus) |> 
+    mutate(Distortion = !target.minus)
+}
+
+target.sf$SampleType <- if_else(target.sf$Distortion, "Distortion", "School")
 
 ## 4.3 Calculate percentage of distortion -------------
 #++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-school.sf <- school.sf |> mutate(Distortion = !corrected)
-school.sf$Distortion[is.na(school.sf$Distortion)] <- T
-
-school.df <- school.sf |> st_drop_geometry() 
-
-
 # Calculate the area of the samples for each radius
-school.sf <- school.sf |> 
+target.sf <- target.sf |> 
   mutate(
     radius.plus = radius + delta.r,
     Area = (phi.ang*pi/360)*(radius.plus^2 - radius^2)
   )
 
-# Filter the distortion-corrected school
-school.cor.sf <- school.sf |> filter(!Distortion)
+# Filter the distortion-corrected target
+target.cor.sf <- target.sf |> filter(!Distortion)
 
 # Esimate the area of the distorted ellipse:
 Area.ellipse <- st_area(ellip.sf)
-# Estimate the area of the distorted school
-Area.dist <- school.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
-# Estimate the area of the distortion-corrected school
-Area.cor <- school.cor.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
+# Estimate the area of the distorted target
+Area.dist <- target.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
+# Estimate the area of the distortion-corrected target
+Area.cor <- target.cor.sf |> st_drop_geometry() |>  summarise(round(sum(Area))) |> pull()
 # Percentage of distortion:
 Dist.pctg <- round(100*(Area.dist - Area.cor)/Area.dist)
 
 
 ## 4.4 Make the plot -------------
-#+++++++++++++++++++++++++++++++++++++++++++
+#+++++++++++++++++++++++++++++++++
 
 # Select the manual colors so they work properly in both cases
-# Select the manual colors so they work properly in both cases
 if (overlap == 0) {colores <- c("blue","red")} else {
-  if (length(unique(school.sf$Distortion)) == 2)
-    colores <- c("blue","red") else colores <- "red"
+  if (length(unique(target.sf$Distortion)) == 2)
+    colores <- c("red","blue") else colores <- "red"
 }
 
 # Plots
-ggplot(beam.sf) + 
+ggplot(swath.sf) + 
   ggtitle(paste0("Distortion = ", Dist.pctg, "%"),
-          subtitle = paste("Apparent area:", Area.dist, "m2;", 
+          subtitle = paste("Apparent area:", Area.dist, "m2;",
                            "True area:", Area.cor, "m2")) +
   # plot the swath
-  geom_sf(data = beam.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
-  # plot the school (distorted and correct samples in different colors):
-  geom_sf(data = school.sf, aes(geometry = geometry, size = (radius)/10, color = Distortion))  +
+  geom_sf(data = swath.sf, aes(geometry = geometry, size = (radius)/10), color = "grey90")  +
+  # plot the target (distorted and correct samples in different colors):
+  geom_sf(data = target.sf, aes(geometry = geometry, size = (radius)/10, color = SampleType))  +
   # distorted ellipse
   geom_path(data = ellip.df, aes(x = x, y = y)) +
   scale_color_manual(values =  colores) +
@@ -321,11 +336,11 @@ ggplot(beam.sf) +
 
 # Figure 3 
 # Plots
-ggplot(beam.sf) + 
+ggplot(swath.sf) + 
   # plot the swath
-  geom_sf(data = beam.sf, aes(geometry = geometry), color = "black")  +
-  # plot the school (distorted and correct samples in different colors):
-  geom_sf(data = school.sf, aes(geometry = geometry, color = Distortion))  +
+  geom_sf(data = swath.sf, aes(geometry = geometry), color = "black")  +
+  # plot the target (distorted and correct samples in different colors):
+  geom_sf(data = target.sf, aes(geometry = geometry, color = SampleType))  +
   # distorted ellipse
   geom_path(data = ellip.df, aes(x = x, y = y), color = "red", linewidth = 2) +
   scale_color_manual(values =  colores) +
@@ -335,14 +350,14 @@ ggplot(beam.sf) +
 
 # Figure 3 
 # Plots
-ggplot(beam.sf) + 
+ggplot(swath.sf) + 
   ggtitle(paste0("Distortion = ", Dist.pctg, "%"),
           subtitle = paste("Apparent area:", Area.dist, "m2;", 
                            "True area:", Area.cor, "m2")) +
   # plot the swath
-  geom_sf(data = beam.sf, aes(geometry = geometry), color = "black")  +
-  # plot the school (distorted and correct samples in different colors):
-  geom_sf(data = school.sf, aes(geometry = geometry, color = Distortion))  +
+  geom_sf(data = swath.sf, aes(geometry = geometry), color = "black")  +
+  # plot the target (distorted and correct samples in different colors):
+  geom_sf(data = target.sf, aes(geometry = geometry, color = SampleType))  +
   # distorted ellipse
   geom_path(data = ellip.df, aes(x = x, y = y)) +
   scale_color_manual(values =  colores) +
