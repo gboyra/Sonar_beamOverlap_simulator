@@ -12,7 +12,7 @@ either simulating the distortion of a true school or correcting the shape of a d
 This tool aims to enhance the interpretation of multibeam sonar signals and improve the accuracy of target dimension estimates, 
 facilitating more effective use of these sonars in scientific research.
 
-Information about the equations and code used to build the script can be found in the follwing paper and preprint:
+Information about the equations and code used to build the script can be found in the following paper and preprint:
 
 https://www.researchgate.net/publication/366673185_Correction_of_beam_overlap-induced_athwart_distortion_in_multibeam_sonars
 
