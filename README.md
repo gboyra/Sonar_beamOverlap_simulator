@@ -3,7 +3,7 @@ using multiple beams to provide comprehensive size measurements of detected targ
 However, challenges remain in accurately estimating target dimensions due to beam geometric expansion and overlap, 
 particularly in athwart-beam measurements, which tend to be overestimated with increasing distance from the transducer. 
 
-This repository contains a the script for an interactive shinny app that simulates distortion 
+This repository contains the script for an interactive shinny app that simulates distortion 
 caused by beam overlap and expansion in multibeam sonars using simple geometric equations. Users can define sonar characteristics, 
 such as the number of beams, swath opening, and degree of overlap, and specify an elliptical target's dimensions, orientation, 
 and distance from the transducer. The application estimates and visualizes the true and distorted shapes of the target, 
